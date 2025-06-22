@@ -1,30 +1,32 @@
+import pandas as pd
+import json
 import requests
 from readability import Document
 from bs4 import BeautifulSoup
 from requests.exceptions import RequestException
-import json
-import pandas as pd
-import re
 
 def get_api_key():
-    return "AIzaSyBMUGzMz7SxlBvJ2KdsQE0Ovez2kHJo3No"
+  return "AIzaSyBMUGzMz7SxlBvJ2KdsQE0Ovez2kHJo3No"
 
 def get_prompt_text():
     return (f"""
-Extract structured information from the text below about a birding challenge. For each item, provide the value or list if available, or 'NONE' if missing.
-Number of birders
-Number of observations
-Number of lists
-Number of species
-Number of unique lists with media
-Names of birders (list)
-Winner's name
-How was the winner chosen
-Location of the challenge
-Number of checklist requirements for completing the challenge
-Extra condition for completing the challenge 
-Any tips or important points (list)
-List of bird species mentioned (list)
+Extract structured information from the text below about a birding challenge. 
+Return your answer as a JSON object with the following keys:
+- number_of_birders (integer or "Not found")
+- number_of_observations (integer or "Not found")
+- number_of_lists (integer or "Not found")
+- number_of_species (integer or "Not found")
+- number_of_unique_lists_with_media (integer or "Not found")
+- names_of_birders (list of strings or "Not found")
+- winner_name (string or "Not found")
+- how_was_winner_chosen (string or "Not found")
+- location_of_challenge (string or "Not found")
+- checklist_requirements (string or "Not found")
+- extra_condition (string or "Not found")
+- tips_or_important_points (list of strings or "Not found")
+- bird_species_mentioned (list of strings or "Not found")
+
+If a value is missing, use "Not found". Do not include any explanation or markdown, only output the JSON.
 
 Text:
 \"\"\"{page_content}\"\"\"
@@ -82,109 +84,6 @@ def send_to_gemini(api_key: str, page_content: str):
     else:
         raise Exception(f"Error {response.status_code}: {response.text}")
 
-def parse_gemini_structured_response(text):
-    """
-    Parse Gemini's structured response into a dictionary.
-    Assumes each attribute is on a new line, optionally with a colon.
-    """
-    fields = [
-        "Number of birders",
-        "Number of observations",
-        "Number of lists",
-        "Number of species",
-        "Number of unique lists with media",
-        "Names of birders",
-        "Winner's name",
-        "How was the winner chosen",
-        "Location of the challenge",
-        "Number of checklist requirements for completing the challenge",
-        "Extra condition for completing the challenge",
-        "Any tips or important points",
-        "List of bird species mentioned"
-    ]
-    number_fields = [
-        "Number of birders",
-        "Number of observations",
-        "Number of lists",
-        "Number of species",
-        "Number of unique lists with media",
-        "Number of checklist requirements for completing the challenge"
-    ]
-    list_fields = [
-        "Names of birders",
-        "Any tips or important points",
-        "List of bird species mentioned"
-    ]
-    text_fields = [
-        "Winner's name",
-        "How was the winner chosen",
-        "Location of the challenge",
-        "Extra condition for completing the challenge"
-    ]
-
-    result = {}
-    for idx, field in enumerate(fields):
-        next_field = fields[idx + 1] if idx + 1 < len(fields) else None
-        if next_field:
-            pattern = rf"{re.escape(field)}\s*[:\-]?\s*(.*?)(?=\n{re.escape(next_field)}\s*[:\-]?|\Z)"
-        else:
-            pattern = rf"{re.escape(field)}\s*[:\-]?\s*(.*)"
-        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-        if match:
-            value = match.group(1).strip()
-            if field in number_fields:
-                num_match = re.search(r"[\d,]+", value)
-                if num_match:
-                    value = num_match.group(0).replace(",", "")
-                else:
-                    value = "NONE"
-            elif field == "Names of birders":
-                # Only keep lines that look like names (not field labels, not empty, not 'NONE')
-                items = []
-                for line in value.splitlines():
-                    line = line.strip()
-                    # Remove bullet/number and markdown
-                    line = re.sub(r"^(\*|\-|\•|\d+\.)\s*", "", line)
-                    line = re.sub(r"^\*\*|\*\*$", "", line)
-                    line = line.strip()
-                    # Filter: must contain at least one letter, not a field label, not 'NONE'
-                    if (
-                        line
-                        and line.upper() != "NONE"
-                        and not re.match(r"^(winner|how|location|number|extra|any tips|list of bird)", line, re.I)
-                        and re.search(r"[A-Za-z]", line)
-                    ):
-                        items.append(line)
-                value = items if items else "NONE"
-            elif field in ["Any tips or important points", "List of bird species mentioned"]:
-                items = []
-                for line in value.splitlines():
-                    line = line.strip()
-                    if re.match(r"^(\*|\-|\•|\d+\.)\s+", line):
-                        line = re.sub(r"^(\*|\-|\•|\d+\.)\s+", "", line)
-                        line = re.sub(r"^\*\*|\*\*$", "", line)
-                        line = line.strip()
-                        if line and line.upper() != "NONE":
-                            items.append(line)
-                value = items if items else "NONE"
-            elif field in text_fields:
-                # Take the first non-empty line, remove markdown and field label
-                lines = [l.strip() for l in value.splitlines() if l.strip()]
-                if lines:
-                    line = lines[0]
-                    line = re.sub(r"^\*\*|\*\*$", "", line)
-                    # Remove field label if present
-                    line = re.sub(rf"^{re.escape(field)}\s*[:\-]?\s*", "", line, flags=re.I)
-                    value = line.strip() if line.strip() else "NONE"
-                else:
-                    value = "NONE"
-            else:
-                value = value if value else "NONE"
-            result[field] = value
-        else:
-            result[field] = "NONE"
-    return result
-
 def pretty_print_gemini_response(response_json):
     try:
         # Extract the first candidate's first part's text
@@ -208,88 +107,134 @@ def pretty_print_gemini_response(response_json):
     except Exception as e:
         print(f"Error while parsing response: {e}")
 
-
+def extract_clean_gemini_json(response_json, not_found_as_null=True):
+    """
+    Extracts and cleans the JSON object from Gemini's response, returning only the required fields.
+    If not_found_as_null is True, replaces 'Not found' with ''.
+    """
+    import json
+    required_keys = [
+        "number_of_birders",
+        "number_of_observations",
+        "number_of_lists",
+        "number_of_species",
+        "number_of_unique_lists_with_media",
+        "names_of_birders",
+        "winner_name",
+        "how_was_winner_chosen",
+        "location_of_challenge",
+        "checklist_requirements",
+        "extra_condition",
+        "tips_or_important_points",
+        "bird_species_mentioned"
+    ]
+    # Extract the text from Gemini response
+    candidates = response_json.get("candidates", [])
+    if not candidates:
+        return {k: ("" if not_found_as_null else "Not found") for k in required_keys}
+    content = candidates[0].get("content", {})
+    parts = content.get("parts", [])
+    if not parts:
+        return {k: ("" if not_found_as_null else "Not found") for k in required_keys}
+    text = parts[0].get("text", "")
+    # Remove markdown code block if present
+    if text.strip().startswith("```json"):
+        text = text.strip().lstrip("`json").strip('`').strip()
+        text = text[text.find('{'):]  # start from first {
+    elif text.strip().startswith("```"):
+        text = text.strip().lstrip("`").strip()
+        text = text[text.find('{'):]
+    # Try to load JSON
     try:
-        # Extract the first candidate's first part's text
-        candidates = response_json.get("candidates", [])
-        if not candidates:
-            print("No candidates found in response.")
-            return
+        data = json.loads(text)
+    except Exception:
+        # Try to extract JSON substring
+        import re
+        match = re.search(r'\{[\s\S]*\}', text)
+        if match:
+            try:
+                data = json.loads(match.group(0))
+            except Exception:
+                data = {}
+        else:
+            data = {}
+    # Build clean dict with only required keys
+    clean = {}
+    for k in required_keys:
+        v = data.get(k, "Not found")
+        if not_found_as_null and v == "Not found":
+            v = ""
+        clean[k] = v
+    return clean
 
-        content = candidates[0].get("content", {})
-        parts = content.get("parts", [])
-        if not parts:
-            print("No parts found in content.")
-            return
+def ensure_gemini_columns_exist(df):
+    gemini_columns = [
+        "number_of_birders",
+        "number_of_observations",
+        "number_of_lists",
+        "number_of_species",
+        "number_of_unique_lists_with_media",
+        "names_of_birders",
+        "winner_name",
+        "how_was_winner_chosen",
+        "location_of_challenge",
+        "checklist_requirements",
+        "extra_condition",
+        "tips_or_important_points",
+        "bird_species_mentioned"
+    ]
+    for col in gemini_columns:
+        if col not in df.columns:
+            df[col] = None
+    return df
 
-        text = parts[0].get("text", "")
+def append_gemini_response_to_df_row(df, url, gemini_response):
+    """
+    Appends Gemini response values to the DataFrame row corresponding to the given URL.
+    Lists are saved as JSON strings. All values are cast to string for compatibility.
+    """
+    import json
+    row_idx = df.index[df["Article URL"] == url]
+    if len(row_idx) == 0:
+        return df  # URL not found, do nothing
+    row_idx = row_idx[0]
+    for key, value in gemini_response.items():
+        # Save lists as JSON strings
+        if isinstance(value, list):
+            value = json.dumps(value, ensure_ascii=False)
+        # Cast all values to string for DataFrame compatibility
+        if value is None:
+            value = ""
+        value = str(value)
+        df.at[row_idx, key] = value
+    return df
 
-        # Print clean output
-        print("\n=== Extracted Structured Information ===\n")
-        print(text.strip())
-
+def append_values_from_url(df, url, api_key):
+    """
+    For a given URL, fetches content, gets Gemini response, cleans it, prints it, and appends to the DataFrame.
+    Returns the updated DataFrame.
+    """
+    try:
+        page_content = extract_main_content(url)
+        response = send_to_gemini(api_key, page_content)
+        clean_response = extract_clean_gemini_json(response)
+        print("📥 Gemini Response:", clean_response)
+        df = append_gemini_response_to_df_row(df, url, clean_response)
     except Exception as e:
-        print(f"Error while parsing response: {e}")
-
-file_name = "ebird_challenges_all.xlsx"
-
-
+        print(f"❌ Failed to process URL {url}: {e}")
+    return df
 
 if __name__ == "__main__":
-    df = pd.read_excel(file_name)
+    df = pd.read_excel("sample.xlsx")
     urls = df["Article URL"].dropna().tolist()
+    urls = urls[:2]
     API_KEY = get_api_key()
 
-    # Prepare columns for all attributes if not already present
-    gemini_fields = [
-        "Number of birders",
-        "Number of observations",
-        "Number of lists",
-        "Number of species",
-        "Number of unique lists with media",
-        "Names of birders",
-        "Winner's name",
-        "How was the winner chosen",
-        "Location of the challenge",
-        "Number of checklist requirements for completing the challenge",
-        "Extra condition for completing the challenge",
-        "Any tips or important points",
-        "List of bird species mentioned"
-    ]
-    for field in gemini_fields:
-        if field not in df.columns:
-            df[field] = None
+    # Ensure all Gemini response columns exist in the DataFrame before processing
+    df = ensure_gemini_columns_exist(df)
 
     for idx, url in enumerate(urls, start=1):
-        print(f"\n🔗 Processing URL {idx}: {url}")
-        try:
-            page_content = extract_main_content(url)
-            response = send_to_gemini(API_KEY, page_content)
-            # Extract text from Gemini response
-            candidates = response.get("candidates", [])
-            if not candidates:
-                print("No candidates found in response.")
-                continue
-            content = candidates[0].get("content", {})
-            parts = content.get("parts", [])
-            if not parts:
-                print("No parts found in content.")
-                continue
-            text = parts[0].get("text", "")
-            # Parse structured response
-            parsed = parse_gemini_structured_response(text)
-            # Update DataFrame row for this URL
-            row_idx = df.index[df["Article URL"] == url][0]
-            for field in gemini_fields:
-                value = parsed[field]
-                # Store lists as JSON strings for Excel compatibility
-                if isinstance(value, list):
-                    value = json.dumps(value, ensure_ascii=False)
-                df.at[row_idx, field] = value
-            print("📥 Gemini Response:")
-            pretty_print_gemini_response(response)
-        except Exception as e:
-            print(f"❌ Failed to process URL {idx}: {e}")
-
-    # Save updated DataFrame back to Excel
-    df.to_excel("file1.xlsx", index=False)
+        # print(f"\n🔗 Processing URL {idx}: {url}")
+        df = append_values_from_url(df, url, API_KEY)
+    # Save the updated DataFrame back to Excel
+    df.to_excel("sample.xlsx", index=False)
