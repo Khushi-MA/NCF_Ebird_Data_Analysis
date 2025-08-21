@@ -1,3 +1,5 @@
+Replave YOUR_API_KEY with your API key (Gemini)
+
 ### **Summary**
 Interned with **Nature Conservation Foundation (NCF) – Bird Count India** in the **Data Analysis & Visualization** domain during June - August. 
 
