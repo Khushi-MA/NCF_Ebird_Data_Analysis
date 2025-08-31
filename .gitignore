@@ -1,3 +1,7 @@
 july29.ipynb
 colour.txt
 extra.docx
+
+# Ignore temporary Office files (those starting with ~)
+~$*.docx
+~WRL*.tmp
